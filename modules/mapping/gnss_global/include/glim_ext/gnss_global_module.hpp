@@ -12,6 +12,8 @@
 #include <glim/util/concurrent_vector.hpp>
 
 #ifdef GLIM_ROS2
+#include <rclcpp/rclcpp.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <glim/util/extension_module_ros2.hpp>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 
@@ -29,6 +31,11 @@ double to_sec(const Stamp& stamp) {
 
 using ExtensionModuleBase = glim::ExtensionModuleROS;
 #endif
+
+#include <tf2_eigen/tf2_eigen.hpp>  
+#include <geometry_msgs/msg/transform_stamped.hpp>
+#include <Eigen/Geometry>
+
 
 #include <spdlog/spdlog.h>
 #include <gtsam/inference/Symbol.h>
@@ -76,14 +83,50 @@ public:
     GlobalMappingCallbacks::on_insert_submap.add(std::bind(&GNSSGlobal::on_insert_submap, this, _1));
     GlobalMappingCallbacks::on_smoother_update.add(std::bind(&GNSSGlobal::on_smoother_update, this, _1, _2, _3));
   }
+
+
+  // -----------------------------------------------------------------
+
+  std::vector<GenericTopicSubscription::Ptr> create_subscriptions(rclcpp::Node& node) override {
+
+    utm2gnss_pub_ = node.create_publisher<geometry_msgs::msg::TransformStamped>("~/utm2gnss", 10);
+
+    const auto sub = std::make_shared<TopicSubscription<PoseWithCovarianceStamped>>(gnss_topic, [this](const PoseWithCovarianceStampedConstPtr msg) { gnss_callback(msg); });
+    return {sub};
+  }
+
+
+  geometry_msgs::msg::TransformStamped eigenToTransform(const Eigen::Isometry3d& T) {
+    geometry_msgs::msg::TransformStamped t;
+    t.transform.translation.x = T.translation().x();
+    t.transform.translation.y = T.translation().y();
+    t.transform.translation.z = T.translation().z();
+  
+    Eigen::Quaterniond q(T.rotation());
+    t.transform.rotation.x = q.x();
+    t.transform.rotation.y = q.y();
+    t.transform.rotation.z = q.z();
+    t.transform.rotation.w = q.w();
+  
+    return t;
+  }
+
+  void publish_utm2gnss_transform(const std::string& frame_id, const std::string& child_frame_id, const Eigen::Isometry3d& transform) {
+    if (utm2gnss_pub_) {
+      geometry_msgs::msg::TransformStamped transform_stamped;
+      transform_stamped = eigenToTransform(transform);
+      transform_stamped.header.stamp = rclcpp::Clock().now();
+      transform_stamped.header.frame_id = frame_id;
+      transform_stamped.child_frame_id = child_frame_id;
+      utm2gnss_pub_->publish(transform_stamped);
+    }
+  }
+
+  // -----------------------------------------------------------------
+
   ~GNSSGlobal() {
     kill_switch = true;
     thread.join();
-  }
-
-  virtual std::vector<GenericTopicSubscription::Ptr> create_subscriptions() override {
-    const auto sub = std::make_shared<TopicSubscription<PoseWithCovarianceStamped>>(gnss_topic, [this](const PoseWithCovarianceStampedConstPtr msg) { gnss_callback(msg); });
-    return {sub};
   }
 
   void gnss_callback(const PoseWithCovarianceStampedConstPtr& gnss_msg) {
@@ -187,7 +230,15 @@ public:
         T_utm_world.linear().block<2, 2>(0, 0) = U * S * V.transpose();
         T_utm_world.translation() = mean_gnss - T_utm_world.linear() * mean_est;
 
+        /*
+
+        broadcast_transform(const std::string& frame_id, const std::string& child_frame_id, const geometry_msgs::msg::Transform& transform)
+        
+        */
+
         T_world_utm = T_utm_world.inverse();
+
+        publish_utm2gnss_transform("gnss", "utm", T_world_utm);
 
         for (int i = 0; i < submaps.size(); i++) {
           const Eigen::Vector3d gnss = T_world_utm * submap_coords[i].tail<3>();
@@ -200,6 +251,8 @@ public:
 
       // Add translation prior factor
       if (transformation_initialized) {
+        publish_utm2gnss_transform("gnss", "utm", T_world_utm);
+
         const Eigen::Vector3d xyz = T_world_utm * submap_coords.back().tail<3>();
         logger->debug("submap={} gnss={}", convert_to_string(submaps.back()->T_world_origin.translation().eval()), convert_to_string(xyz));
 
@@ -213,6 +266,9 @@ public:
   }
 
 private:
+  rclcpp::Publisher<geometry_msgs::msg::TransformStamped>::SharedPtr utm2gnss_pub_;
+
+
   std::atomic_bool kill_switch;
   std::thread thread;
 

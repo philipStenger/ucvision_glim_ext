@@ -6,6 +6,9 @@ set(CMAKE_CXX_STANDARD 17)
 find_package(glim REQUIRED)
 find_package(GTSAM REQUIRED)
 find_package(spdlog REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_eigen REQUIRED)
+
 
 if($ENV{ROS_VERSION} EQUAL 2)
   # ROS2
@@ -33,6 +36,10 @@ target_include_directories(gnss_global PRIVATE
   ${GTSAM_INCLUDE_DIRS}
   ${glim_INCLUDE_DIRS}
   ${catkin_INCLUDE_DIRS}
+  ${tf2_ros_INCLUDE_DIRS}
+  ${tf2_eigen_INCLUDE_DIRS}
+
+
 )
 target_link_libraries(gnss_global
   glim_ext
@@ -40,4 +47,8 @@ target_link_libraries(gnss_global
   ${glim_LIBRARIES}
   spdlog::spdlog
   ${catkin_LIBRARIES}
+  ${tf2_ros_LIBRARIES}
+  ${tf2_eigen_LIBRARIES}
+
+
 )

@@ -7,6 +7,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_LIST_DIR}/cmake")
 option(ENABLE_ORBSLAM "Enable ORB-SLAM odometry" OFF)
 option(ENABLE_VELSUPP "Enable Velocity suppressor" ON)
 option(ENABLE_IMUVAL "Enable IMU calibration validator" ON)
+option(ENABLE_RVIZ "Enable RViz viewer" ON) 
 
 # Local and global mapping modules
 option(ENABLE_SCAN_CONTEXT "Enable ScanContext Loop Detector" OFF)
@@ -81,6 +82,11 @@ endif()
 if(ENABLE_FLATEARTHER)
   add_subdirectory(modules/mapping/flat_earther)
   list(APPEND glim_ext_LIBRARIES flat_earther)
+endif()
+
+if(ENABLE_RVIZ)
+  add_subdirectory(modules/odometry/glim_rviz_viewer)
+  list(APPEND glim_ext_LIBRARIES glim_rviz_viewer)
 endif()
 
 #############
