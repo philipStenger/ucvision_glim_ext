@@ -95,14 +95,14 @@ void GlimRvizViewer::apply_transform_to_pointcloud(pcl::PointCloud<pcl::PointXYZ
 
   // Create an Eigen transform from the geometry_msgs::msg::TransformStamped
   Eigen::Matrix4f transform = Eigen::Matrix4f::Identity();
-  transform(0, 3) = T_map_gnss.transform.translation.x;
-  transform(1, 3) = T_map_gnss.transform.translation.y;
-  transform(2, 3) = T_map_gnss.transform.translation.z;
+  transform(0, 3) = T_world_utm.transform.translation.x;
+  transform(1, 3) = T_world_utm.transform.translation.y;
+  transform(2, 3) = T_world_utm.transform.translation.z;
   Eigen::Quaternionf q(
-      T_map_gnss.transform.rotation.w,
-      T_map_gnss.transform.rotation.x,
-      T_map_gnss.transform.rotation.y,
-      T_map_gnss.transform.rotation.z
+      T_world_utm.transform.rotation.w,
+      T_world_utm.transform.rotation.x,
+      T_world_utm.transform.rotation.y,
+      T_world_utm.transform.rotation.z
   );
   transform.block<3, 3>(0, 0) = q.toRotationMatrix();
 
@@ -116,7 +116,7 @@ void GlimRvizViewer::apply_transform_to_pointcloud(pcl::PointCloud<pcl::PointXYZ
 
 void GlimRvizViewer::utm2gnss_callback(const geometry_msgs::msg::TransformStamped::SharedPtr msg) {
   // Store the received TransformStamped message
-  T_map_gnss = *msg;
+  T_world_utm = *msg;
 }
 
 void GlimRvizViewer::set_callbacks() {

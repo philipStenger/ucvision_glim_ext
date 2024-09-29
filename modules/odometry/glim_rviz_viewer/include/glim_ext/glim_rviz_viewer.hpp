@@ -53,7 +53,7 @@ private:
 private:
   std::atomic_bool kill_switch;
   std::thread thread;
-  geometry_msgs::msg::TransformStamped T_map_gnss;
+  geometry_msgs::msg::TransformStamped T_world_utm;
 
   std::unique_ptr<tf2_ros::Buffer> tf_buffer;
   std::unique_ptr<tf2_ros::TransformListener> tf_listener;

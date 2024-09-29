@@ -238,7 +238,7 @@ public:
 
         T_world_utm = T_utm_world.inverse();
 
-        publish_utm2gnss_transform("gnss", "utm", T_world_utm);
+        publish_utm2gnss_transform("world", "utm", T_world_utm);
 
         for (int i = 0; i < submaps.size(); i++) {
           const Eigen::Vector3d gnss = T_world_utm * submap_coords[i].tail<3>();
@@ -251,7 +251,7 @@ public:
 
       // Add translation prior factor
       if (transformation_initialized) {
-        publish_utm2gnss_transform("gnss", "utm", T_world_utm);
+        publish_utm2gnss_transform("world", "utm", T_world_utm);
 
         const Eigen::Vector3d xyz = T_world_utm * submap_coords.back().tail<3>();
         logger->debug("submap={} gnss={}", convert_to_string(submaps.back()->T_world_origin.translation().eval()), convert_to_string(xyz));
