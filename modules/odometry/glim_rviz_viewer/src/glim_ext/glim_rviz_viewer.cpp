@@ -69,7 +69,7 @@ std::vector<GenericTopicSubscription::Ptr> GlimRvizViewer::create_subscriptions(
 
   points_pub = node.create_publisher<sensor_msgs::msg::PointCloud2>("~/points", 10);
   aligned_points_pub = node.create_publisher<sensor_msgs::msg::PointCloud2>("~/aligned_points", 10);
-  utm2gnss_sub = node.create_subscription<geometry_msgs::msg::TransformStamped>("/glim_ros/utm2gnss", 10, std::bind(&GlimRvizViewer::utm2gnss_callback, this, std::placeholders::_1));
+  // utm2gnss_sub = node.create_subscription<geometry_msgs::msg::TransformStamped>("/glim_ros/utm2gnss", 10, std::bind(&GlimRvizViewer::utm2gnss_callback, this, std::placeholders::_1));
 
   rmw_qos_profile_t map_qos_profile = {
     RMW_QOS_POLICY_HISTORY_KEEP_LAST,
@@ -159,52 +159,42 @@ void GlimRvizViewer::odometry_new_frame(const EstimationFrame::ConstPtr& new_fra
   trans.header.frame_id = odom_frame_id;
   trans.child_frame_id = base_frame_id;
 
-  if (base_frame_id == imu_frame_id) {
-    trans.transform.translation.x = T_odom_imu.translation().x();
-    trans.transform.translation.y = T_odom_imu.translation().y();
-    trans.transform.translation.z = T_odom_imu.translation().z();
-    trans.transform.rotation.x = quat_odom_imu.x();
-    trans.transform.rotation.y = quat_odom_imu.y();
-    trans.transform.rotation.z = quat_odom_imu.z();
-    trans.transform.rotation.w = quat_odom_imu.w();
+  try {
+    const auto trans_imu_base = tf_buffer->lookupTransform(imu_frame_id, base_frame_id, from_sec(new_frame->stamp));
+    const auto& t = trans_imu_base.transform.translation;
+    const auto& r = trans_imu_base.transform.rotation;
+
+    Eigen::Isometry3d T_imu_base = Eigen::Isometry3d::Identity();
+    T_imu_base.translation() << t.x, t.y, t.z;
+    T_imu_base.linear() = Eigen::Quaterniond(r.w, r.x, r.y, r.z).toRotationMatrix();
+
+    const Eigen::Isometry3d T_odom_base = T_odom_imu * T_imu_base;
+    const Eigen::Quaterniond quat_odom_base(T_odom_base.linear());
+
+    trans.transform.translation.x = T_odom_base.translation().x();
+    trans.transform.translation.y = T_odom_base.translation().y();
+    trans.transform.translation.z = T_odom_base.translation().z();
+    trans.transform.rotation.x = quat_odom_base.x();
+    trans.transform.rotation.y = quat_odom_base.y();
+    trans.transform.rotation.z = quat_odom_base.z();
+    trans.transform.rotation.w = quat_odom_base.w();
     tf_broadcaster->sendTransform(trans);
-  } else {
-    try {
-      const auto trans_imu_base = tf_buffer->lookupTransform(imu_frame_id, base_frame_id, from_sec(new_frame->stamp));
-      const auto& t = trans_imu_base.transform.translation;
-      const auto& r = trans_imu_base.transform.rotation;
-
-      Eigen::Isometry3d T_imu_base = Eigen::Isometry3d::Identity();
-      T_imu_base.translation() << t.x, t.y, t.z;
-      T_imu_base.linear() = Eigen::Quaterniond(r.w, r.x, r.y, r.z).toRotationMatrix();
-
-      const Eigen::Isometry3d T_odom_base = T_odom_imu * T_imu_base;
-      const Eigen::Quaterniond quat_odom_base(T_odom_base.linear());
-
-      trans.transform.translation.x = T_odom_base.translation().x();
-      trans.transform.translation.y = T_odom_base.translation().y();
-      trans.transform.translation.z = T_odom_base.translation().z();
-      trans.transform.rotation.x = quat_odom_base.x();
-      trans.transform.rotation.y = quat_odom_base.y();
-      trans.transform.rotation.z = quat_odom_base.z();
-      trans.transform.rotation.w = quat_odom_base.w();
-      tf_broadcaster->sendTransform(trans);
-    } catch (const tf2::TransformException& e) {
-      logger->warn("Failed to lookup transform from {} to {} (stamp={}.{}): {}", imu_frame_id, base_frame_id, stamp.sec, stamp.nanosec, e.what());
-    }
+  } catch (const tf2::TransformException& e) {
+    logger->warn("Failed to lookup transform from {} to {} (stamp={}.{}): {}", imu_frame_id, base_frame_id, stamp.sec, stamp.nanosec, e.what());
   }
 
-  // World -> Odom
-  trans.header.frame_id = map_frame_id;
-  trans.child_frame_id = odom_frame_id;
-  trans.transform.translation.x = T_world_odom.translation().x();
-  trans.transform.translation.y = T_world_odom.translation().y();
-  trans.transform.translation.z = T_world_odom.translation().z();
-  trans.transform.rotation.x = quat_world_odom.x();
-  trans.transform.rotation.y = quat_world_odom.y();
-  trans.transform.rotation.z = quat_world_odom.z();
-  trans.transform.rotation.w = quat_world_odom.w();
-  tf_broadcaster->sendTransform(trans);
+
+  // // World -> Odom
+  // trans.header.frame_id = map_frame_id;
+  // trans.child_frame_id = odom_frame_id;
+  // trans.transform.translation.x = T_world_odom.translation().x();
+  // trans.transform.translation.y = T_world_odom.translation().y();
+  // trans.transform.translation.z = T_world_odom.translation().z();
+  // trans.transform.rotation.x = quat_world_odom.x();
+  // trans.transform.rotation.y = quat_world_odom.y();
+  // trans.transform.rotation.z = quat_world_odom.z();
+  // trans.transform.rotation.w = quat_world_odom.w();
+  // tf_broadcaster->sendTransform(trans);
 
   // IMU -> LiDAR
   if (publish_imu2lidar) {
@@ -242,7 +232,7 @@ void GlimRvizViewer::odometry_new_frame(const EstimationFrame::ConstPtr& new_fra
     // Publish sensor pose (with loop closure)
     geometry_msgs::msg::PoseStamped pose;
     pose.header.stamp = stamp;
-    pose.header.frame_id = map_frame_id;
+    pose.header.frame_id = odom_frame_id;
     pose.pose.position.x = T_world_imu.translation().x();
     pose.pose.position.y = T_world_imu.translation().y();
     pose.pose.position.z = T_world_imu.translation().z();
@@ -263,7 +253,7 @@ void GlimRvizViewer::odometry_new_frame(const EstimationFrame::ConstPtr& new_fra
         frame_id = lidar_frame_id;
         break;
       case FrameID::IMU:
-        frame_id = imu_frame_id;
+        frame_id = imu_frame_id;   // usually does this
         break;
       case FrameID::WORLD:
         frame_id = map_frame_id;
@@ -272,40 +262,9 @@ void GlimRvizViewer::odometry_new_frame(const EstimationFrame::ConstPtr& new_fra
 
     auto points = frame_to_pointcloud2(frame_id, new_frame->stamp, *new_frame->frame);
 
-    pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_points = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
-
-    // Convert sensor_msgs::msg::PointCloud2 to pcl::PointCloud
-    pcl::fromROSMsg(*points, *pcl_points);
-
-    // Create a shared pointer for the transformed point cloud
-    auto transformed_points = std::make_shared<sensor_msgs::msg::PointCloud2>();
-
-    // Apply the transform before publishing
-    apply_transform_to_pointcloud(pcl_points, transformed_points);
-
-    points_pub->publish(*transformed_points);
+    points_pub->publish(*points);
 
     logger->debug("published points (stamp={} num_points={})", new_frame->stamp, new_frame->frame->size());
-  }
-
-  if (aligned_points_pub->get_subscription_count()) {
-    // Publish points aligned to the world frame to avoid some visualization issues in Rviz2
-    std::vector<Eigen::Vector4d> transformed(new_frame->frame->size());
-    for (int i = 0; i < new_frame->frame->size(); i++) {
-      transformed[i] = new_frame->T_world_sensor() * new_frame->frame->points[i];
-    }
-
-    gtsam_points::PointCloud frame;
-    frame.num_points = new_frame->frame->size();
-    frame.points = transformed.data();
-    frame.times = new_frame->frame->times;
-    frame.intensities = new_frame->frame->intensities;
-
-    auto points = frame_to_pointcloud2(map_frame_id, new_frame->stamp, frame);
-    
-    aligned_points_pub->publish(*points);
-
-    logger->debug("published aligned_points (stamp={} num_points={})", new_frame->stamp, frame.size());
   }
 }
 
@@ -339,7 +298,7 @@ void GlimRvizViewer::globalmap_on_update_submaps(const std::vector<SubMap::Ptr>&
     }
     last_globalmap_pub_time = now;
 
-    logger->warn("Publishing global map is computationally demanding and not recommended");
+    // logger->warn("Publishing global map is computationally demanding and not recommended");
 
     int total_num_points = 0;
     for (const auto& submap : this->submaps) {
@@ -359,7 +318,7 @@ void GlimRvizViewer::globalmap_on_update_submaps(const std::vector<SubMap::Ptr>&
       begin += submap->size();
     }
 
-    auto points_msg = frame_to_pointcloud2(map_frame_id, now.seconds(), *merged);
+    auto points_msg = frame_to_pointcloud2(odom_frame_id, now.seconds(), *merged);
     map_pub->publish(*points_msg);
   });
 }

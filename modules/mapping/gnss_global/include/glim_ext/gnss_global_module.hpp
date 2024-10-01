@@ -35,7 +35,9 @@ using ExtensionModuleBase = glim::ExtensionModuleROS;
 #include <tf2_eigen/tf2_eigen.hpp>  
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <Eigen/Geometry>
-
+#include <tf2_ros/static_transform_broadcaster.h>
+#include <tf2_ros/transform_broadcaster.h>
+#include <nav_msgs/msg/odometry.hpp>
 
 #include <spdlog/spdlog.h>
 #include <gtsam/inference/Symbol.h>
@@ -89,9 +91,18 @@ public:
 
   std::vector<GenericTopicSubscription::Ptr> create_subscriptions(rclcpp::Node& node) override {
 
+    // Ensure the node is properly initialized
+    if (!node.get_node_base_interface()) {
+      logger->error("Node base interface is not initialized.");
+      throw std::runtime_error("Node base interface is not initialized.");
+    }
+
     utm2gnss_pub_ = node.create_publisher<geometry_msgs::msg::TransformStamped>("~/utm2gnss", 10);
 
-    const auto sub = std::make_shared<TopicSubscription<PoseWithCovarianceStamped>>(gnss_topic, [this](const PoseWithCovarianceStampedConstPtr msg) { gnss_callback(msg); });
+    // std::shared_ptr<tf2_ros::StaticTransformBroadcaster> static_broadcaster_;
+    static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(node);
+
+    const auto sub = std::make_shared<TopicSubscription<nav_msgs::msg::Odometry>>(gnss_topic, [this](const nav_msgs::msg::Odometry::ConstSharedPtr msg) { gnss_callback(msg); });
     return {sub};
   }
 
@@ -122,6 +133,32 @@ public:
     }
   }
 
+    void broadcastTransform(const std::string& frame_id, const std::string& child_frame_id, const Eigen::Isometry3d& transform)
+  {
+      geometry_msgs::msg::TransformStamped transform_stamped;
+      transform_stamped = eigenToTransform(transform);
+      transform_stamped.header.stamp = rclcpp::Clock().now();
+      transform_stamped.header.frame_id = frame_id; // local enu
+      transform_stamped.child_frame_id = child_frame_id; // map
+
+
+      logger->info("broadcasting transform from {} to {}", frame_id, child_frame_id);
+      logger->info("Transform details: translation = ({}, {}, {}), rotation = ({}, {}, {}, {})",
+              transform_stamped.transform.translation.x,
+              transform_stamped.transform.translation.y,
+              transform_stamped.transform.translation.z,
+              transform_stamped.transform.rotation.x,
+              transform_stamped.transform.rotation.y,
+              transform_stamped.transform.rotation.z,
+              transform_stamped.transform.rotation.w);
+      try {
+          static_broadcaster_->sendTransform(transform_stamped);
+      } catch (const std::exception& e) {
+          logger->error("Failed to send transform: {}", e.what());
+      }
+      
+  }
+
   // -----------------------------------------------------------------
 
   ~GNSSGlobal() {
@@ -129,7 +166,7 @@ public:
     thread.join();
   }
 
-  void gnss_callback(const PoseWithCovarianceStampedConstPtr& gnss_msg) {
+  void gnss_callback(const nav_msgs::msg::Odometry::ConstSharedPtr& gnss_msg) {
     Eigen::Vector4d gnss_data;
     const double stamp = to_sec(gnss_msg->header.stamp);
     const auto& pos = gnss_msg->pose.pose.position;
@@ -153,6 +190,7 @@ public:
     std::deque<SubMap::ConstPtr> submap_queue;
 
     while (!kill_switch) {
+      logger->info("GNSS global thread is running");
       // Convert GeoPoint(lat/lon) to UTM
       const auto gnss_data = input_gnss_queue.get_all_and_clear();
       utm_queue.insert(utm_queue.end(), gnss_data.begin(), gnss_data.end());
@@ -163,6 +201,8 @@ public:
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         continue;
       }
+      logger->info("new_submaps={}", new_submaps.size());
+
       submap_queue.insert(submap_queue.end(), new_submaps.begin(), new_submaps.end());
 
       // Remove submaps that are created earlier than the oldest GNSS data
@@ -170,9 +210,15 @@ public:
         submap_queue.pop_front();
       }
 
+      logger->info("AFTER REMOVAL={}", submaps.size());
+
+
       // Interpolate UTM coords and associate with submaps
       while (!utm_queue.empty() && !submap_queue.empty() && submap_queue.front()->frames.front()->stamp > utm_queue.front()[0] &&
              submap_queue.front()->frames.back()->stamp < utm_queue.back()[0]) {
+
+        logger->info("INTERPOLATE LOOP", new_submaps.size());
+
         const auto& submap = submap_queue.front();
         const double stamp = submap->frames[submap->frames.size() / 2]->stamp;
 
@@ -182,7 +228,7 @@ public:
           break;
         }
         const auto left = right - 1;
-        logger->debug("submap={:.6f} utm_left={:.6f} utm_right={:.6f}", stamp, (*left)[0], (*right)[0]);
+        logger->info("submap={:.6f} utm_left={:.6f} utm_right={:.6f}", stamp, (*left)[0], (*right)[0]);
 
         const double tl = (*left)[0];
         const double tr = (*right)[0];
@@ -197,7 +243,12 @@ public:
       }
 
       // Initialize T_world_utm
+      logger->info("ABOUT TO INIT {} {} {}", !transformation_initialized, !submaps.empty(), 1);
+
       if (!transformation_initialized && !submaps.empty() && (submaps.front()->T_world_origin.inverse() * submaps.back()->T_world_origin).translation().norm() > min_baseline) {
+        
+        logger->info("initializing UTM to GNSS transformation");  
+        
         Eigen::Vector3d mean_est = Eigen::Vector3d::Zero();
         Eigen::Vector3d mean_gnss = Eigen::Vector3d::Zero();
         for (int i = 0; i < submaps.size(); i++) {
@@ -229,16 +280,12 @@ public:
         Eigen::Isometry3d T_utm_world = Eigen::Isometry3d::Identity();
         T_utm_world.linear().block<2, 2>(0, 0) = U * S * V.transpose();
         T_utm_world.translation() = mean_gnss - T_utm_world.linear() * mean_est;
-
-        /*
-
-        broadcast_transform(const std::string& frame_id, const std::string& child_frame_id, const geometry_msgs::msg::Transform& transform)
-        
-        */
+      
 
         T_world_utm = T_utm_world.inverse();
 
-        publish_utm2gnss_transform("world", "utm", T_world_utm);
+        broadcastTransform("local_enu", "odom", T_utm_world);
+        // publish_utm2gnss_transform("world", "utm", T_world_utm);
 
         for (int i = 0; i < submaps.size(); i++) {
           const Eigen::Vector3d gnss = T_world_utm * submap_coords[i].tail<3>();
@@ -248,6 +295,8 @@ public:
         logger->info("T_world_utm={}", convert_to_string(T_world_utm));
         transformation_initialized = true;
       }
+
+      logger->info("PRE PRIOR FACTOR");
 
       // Add translation prior factor
       if (transformation_initialized) {
@@ -267,6 +316,7 @@ public:
 
 private:
   rclcpp::Publisher<geometry_msgs::msg::TransformStamped>::SharedPtr utm2gnss_pub_;
+  std::shared_ptr<tf2_ros::StaticTransformBroadcaster> static_broadcaster_;
 
 
   std::atomic_bool kill_switch;

@@ -8,6 +8,8 @@ find_package(GTSAM REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_eigen REQUIRED)
+find_package(nav_msgs REQUIRED)
+
 
 
 if($ENV{ROS_VERSION} EQUAL 2)
@@ -38,6 +40,7 @@ target_include_directories(gnss_global PRIVATE
   ${catkin_INCLUDE_DIRS}
   ${tf2_ros_INCLUDE_DIRS}
   ${tf2_eigen_INCLUDE_DIRS}
+  ${nav_msgs_INCLUDE_DIRS}
 
 
 )
@@ -49,6 +52,7 @@ target_link_libraries(gnss_global
   ${catkin_LIBRARIES}
   ${tf2_ros_LIBRARIES}
   ${tf2_eigen_LIBRARIES}
+  ${nav_msgs_LIBRARIES}
 
 
 )
