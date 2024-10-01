@@ -74,7 +74,7 @@ public:
     min_baseline = config.param<double>("gnss", "min_baseline", 5.0);
 
     transformation_initialized = false;
-    T_world_utm.setIdentity();
+    T_odom_enu.setIdentity();
 
     kill_switch = false;
     thread = std::thread([this] { backend_task(); });
@@ -242,7 +242,7 @@ public:
         utm_queue.erase(utm_queue.begin(), left);
       }
 
-      // Initialize T_world_utm
+      // Initialize T_odom_enu
       logger->info("ABOUT TO INIT {} {} {}", !transformation_initialized, !submaps.empty(), 1);
 
       if (!transformation_initialized && !submaps.empty() && (submaps.front()->T_world_origin.inverse() * submaps.back()->T_world_origin).translation().norm() > min_baseline) {
@@ -277,22 +277,22 @@ public:
           S(1, 1) = -1;
         }
 
-        Eigen::Isometry3d T_utm_world = Eigen::Isometry3d::Identity();
-        T_utm_world.linear().block<2, 2>(0, 0) = U * S * V.transpose();
-        T_utm_world.translation() = mean_gnss - T_utm_world.linear() * mean_est;
+        Eigen::Isometry3d T_enu_odom = Eigen::Isometry3d::Identity();
+        T_enu_odom.linear().block<2, 2>(0, 0) = U * S * V.transpose();
+        T_enu_odom.translation() = mean_gnss - T_enu_odom.linear() * mean_est;
       
 
-        T_world_utm = T_utm_world.inverse();
+        T_odom_enu = T_enu_odom.inverse();
 
-        broadcastTransform("local_enu", "odom", T_utm_world);
-        // publish_utm2gnss_transform("world", "utm", T_world_utm);
+        broadcastTransform("local_enu", "odom", T_enu_odom);
+        // publish_utm2gnss_transform("world", "utm", T_odom_enu);
 
         for (int i = 0; i < submaps.size(); i++) {
-          const Eigen::Vector3d gnss = T_world_utm * submap_coords[i].tail<3>();
+          const Eigen::Vector3d gnss = T_odom_enu * submap_coords[i].tail<3>();
           logger->debug("submap={} gnss={}", convert_to_string(submaps[i]->T_world_origin.translation().eval()), convert_to_string(gnss));
         }
 
-        logger->info("T_world_utm={}", convert_to_string(T_world_utm));
+        logger->info("T_odom_enu={}", convert_to_string(T_odom_enu));
         transformation_initialized = true;
       }
 
@@ -300,9 +300,9 @@ public:
 
       // Add translation prior factor
       if (transformation_initialized) {
-        publish_utm2gnss_transform("world", "utm", T_world_utm);
+        publish_utm2gnss_transform("world", "utm", T_odom_enu);
 
-        const Eigen::Vector3d xyz = T_world_utm * submap_coords.back().tail<3>();
+        const Eigen::Vector3d xyz = T_odom_enu * submap_coords.back().tail<3>();
         logger->debug("submap={} gnss={}", convert_to_string(submaps.back()->T_world_origin.translation().eval()), convert_to_string(xyz));
 
         const auto& submap = submaps.back();
@@ -334,7 +334,7 @@ private:
   double min_baseline;
 
   bool transformation_initialized;
-  Eigen::Isometry3d T_world_utm;
+  Eigen::Isometry3d T_odom_enu;
 
   // Logging
   std::shared_ptr<spdlog::logger> logger;
