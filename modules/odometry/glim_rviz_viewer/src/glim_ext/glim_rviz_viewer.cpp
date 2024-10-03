@@ -187,55 +187,61 @@ void GlimRvizViewer::odometry_new_frame(const EstimationFrame::ConstPtr& new_fra
     logger->warn("Failed to lookup transform from {} to {} (stamp={}.{}): {}", imu_frame_id, base_frame_id, stamp.sec, stamp.nanosec, e.what());
   }
 
-  if (odom_pub->get_subscription_count()) {
-    // Publish sensor pose (without loop closure)
+  // Constants for fixed translation values
+  const double TRANSLATION_X = -0.36171;
+  const double TRANSLATION_Y = 0.011;
+  const double TRANSLATION_Z = -0.54412;
 
-    Eigen::Quaterniond quat_base_imu = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()) *
-                                       Eigen::AngleAxisd(0, Eigen::Vector3d::UnitY()) *
-                                       Eigen::AngleAxisd(M_PI / 2, Eigen::Vector3d::UnitZ());
-
-    Eigen::Quaterniond quat_world_base = quat_world_imu * quat_base_imu.inverse();
-
-
-    nav_msgs::msg::Odometry odom;
-    odom.header.stamp = stamp;
-    odom.header.frame_id = odom_frame_id;
-    odom.child_frame_id = imu_frame_id;
-    odom.pose.pose.position.x = T_odom_imu.translation().x();
-    odom.pose.pose.position.y = T_odom_imu.translation().y();
-    odom.pose.pose.position.z = T_odom_imu.translation().z();
-    odom.pose.pose.orientation.x = quat_world_base.x();
-    odom.pose.pose.orientation.y = quat_world_base.y();
-    odom.pose.pose.orientation.z = quat_world_base.z();
-    odom.pose.pose.orientation.w = quat_world_base.w();
-    odom_pub->publish(odom);
-
-    logger->debug("published odom (stamp={})", new_frame->stamp);
+  // Helper function to create quaternion
+  Eigen::Quaterniond createQuatBaseImu() {
+      return Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()) *
+            Eigen::AngleAxisd(0, Eigen::Vector3d::UnitY()) *
+            Eigen::AngleAxisd(M_PI / 2, Eigen::Vector3d::UnitZ());
   }
 
-  if (pose_pub->get_subscription_count()) {
-    // Publish sensor pose (with loop closure)
+  // Helper function to adjust translation
+  Eigen::Vector3d adjustTranslation(const Eigen::Vector3d& translation) {
+      return Eigen::Vector3d(translation.x() + TRANSLATION_X,
+                            translation.y() + TRANSLATION_Y,
+                            translation.z() + TRANSLATION_Z);
+  }
 
-    Eigen::Quaterniond quat_base_imu = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()) *
-                                       Eigen::AngleAxisd(0, Eigen::Vector3d::UnitY()) *
-                                       Eigen::AngleAxisd(M_PI / 2, Eigen::Vector3d::UnitZ());
+  Eigen::Quaterniond quat_base_imu = createQuatBaseImu();
+  Eigen::Quaterniond quat_world_base = quat_world_imu * quat_base_imu.inverse();
 
-    Eigen::Quaterniond quat_world_base = quat_world_imu * quat_base_imu.inverse();
+  if (odom_pub->get_subscription_count() > 0) {
+      nav_msgs::msg::Odometry odom;
+      odom.header.stamp = stamp;
+      odom.header.frame_id = odom_frame_id;
+      odom.child_frame_id = imu_frame_id;
+      Eigen::Vector3d adjusted_translation = adjustTranslation(T_odom_imu.translation());
+      odom.pose.pose.position.x = adjusted_translation.x();
+      odom.pose.pose.position.y = adjusted_translation.y();
+      odom.pose.pose.position.z = adjusted_translation.z();
+      odom.pose.pose.orientation.x = quat_world_base.x();
+      odom.pose.pose.orientation.y = quat_world_base.y();
+      odom.pose.pose.orientation.z = quat_world_base.z();
+      odom.pose.pose.orientation.w = quat_world_base.w();
+      odom_pub->publish(odom);
 
+      logger->debug("Published odom (stamp={})", stamp);
+  }
 
-    geometry_msgs::msg::PoseStamped pose;
-    pose.header.stamp = stamp;
-    pose.header.frame_id = odom_frame_id;
-    pose.pose.position.x = T_world_imu.translation().x();
-    pose.pose.position.y = T_world_imu.translation().y();
-    pose.pose.position.z = T_world_imu.translation().z();
-    pose.pose.orientation.x = quat_world_base.x();
-    pose.pose.orientation.y = quat_world_base.y();
-    pose.pose.orientation.z = quat_world_base.z();
-    pose.pose.orientation.w = quat_world_base.w();
-    pose_pub->publish(pose);
+  if (pose_pub->get_subscription_count() > 0) {
+      geometry_msgs::msg::PoseStamped pose;
+      pose.header.stamp = stamp;
+      pose.header.frame_id = odom_frame_id;
+      Eigen::Vector3d adjusted_translation = adjustTranslation(T_world_imu.translation());
+      pose.pose.position.x = adjusted_translation.x();
+      pose.pose.position.y = adjusted_translation.y();
+      pose.pose.position.z = adjusted_translation.z();
+      pose.pose.orientation.x = quat_world_base.x();
+      pose.pose.orientation.y = quat_world_base.y();
+      pose.pose.orientation.z = quat_world_base.z();
+      pose.pose.orientation.w = quat_world_base.w();
+      pose_pub->publish(pose);
 
-    logger->debug("published pose (stamp={})", new_frame->stamp);
+      logger->debug("Published pose (stamp={})", stamp);
   }
 
   if (points_pub->get_subscription_count()) {
