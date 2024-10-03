@@ -188,9 +188,11 @@ public:
     logger->info("starting GNSS global thread");
     std::deque<Eigen::Vector4d> utm_queue;
     std::deque<SubMap::ConstPtr> submap_queue;
+    Eigen::Isometry3d T_placeholder = Eigen::Isometry3d::Identity();
+    broadcastTransform("local_enu", "odom", T_placeholder);
+
 
     while (!kill_switch) {
-      logger->info("GNSS global thread is running");
       // Convert GeoPoint(lat/lon) to UTM
       const auto gnss_data = input_gnss_queue.get_all_and_clear();
       utm_queue.insert(utm_queue.end(), gnss_data.begin(), gnss_data.end());
