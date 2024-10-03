@@ -172,7 +172,7 @@ void GlimRvizViewer::odometry_new_frame(const EstimationFrame::ConstPtr& new_fra
     const auto& tr = trans_enu_odom.transform.translation;
     const auto& rr = trans_enu_odom.transform.rotation;
 
-    const Eigen::Isometry3d T_odom_base = T_odom_imu * T_imu_base;  // technically should be T_enu_base
+    const Eigen::Isometry3d T_odom_base = T_odom_imu * T_imu_base; 
     const Eigen::Quaterniond quat_odom_base(T_odom_base.linear());
 
     trans.transform.translation.x = T_odom_base.translation().x();
@@ -187,22 +187,16 @@ void GlimRvizViewer::odometry_new_frame(const EstimationFrame::ConstPtr& new_fra
     logger->warn("Failed to lookup transform from {} to {} (stamp={}.{}): {}", imu_frame_id, base_frame_id, stamp.sec, stamp.nanosec, e.what());
   }
 
-  // // IMU -> LiDAR
-  // if (publish_imu2lidar) {
-  //   trans.header.frame_id = imu_frame_id;
-  //   trans.child_frame_id = lidar_frame_id;
-  //   trans.transform.translation.x = T_lidar_imu.translation().x();
-  //   trans.transform.translation.y = T_lidar_imu.translation().y();
-  //   trans.transform.translation.z = T_lidar_imu.translation().z();
-  //   trans.transform.rotation.x = quat_lidar_imu.x();
-  //   trans.transform.rotation.y = quat_lidar_imu.y();
-  //   trans.transform.rotation.z = quat_lidar_imu.z();
-  //   trans.transform.rotation.w = quat_lidar_imu.w();
-  //   tf_broadcaster->sendTransform(trans);
-  // }
-
   if (odom_pub->get_subscription_count()) {
     // Publish sensor pose (without loop closure)
+
+    Eigen::Quaterniond quat_base_imu = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()) *
+                                       Eigen::AngleAxisd(0, Eigen::Vector3d::UnitY()) *
+                                       Eigen::AngleAxisd(M_PI / 2, Eigen::Vector3d::UnitZ());
+
+    Eigen::Quaterniond quat_world_base = quat_world_imu * quat_base_imu.inverse();
+
+
     nav_msgs::msg::Odometry odom;
     odom.header.stamp = stamp;
     odom.header.frame_id = odom_frame_id;
@@ -210,10 +204,10 @@ void GlimRvizViewer::odometry_new_frame(const EstimationFrame::ConstPtr& new_fra
     odom.pose.pose.position.x = T_odom_imu.translation().x();
     odom.pose.pose.position.y = T_odom_imu.translation().y();
     odom.pose.pose.position.z = T_odom_imu.translation().z();
-    odom.pose.pose.orientation.x = quat_odom_imu.x();
-    odom.pose.pose.orientation.y = quat_odom_imu.y();
-    odom.pose.pose.orientation.z = quat_odom_imu.z();
-    odom.pose.pose.orientation.w = quat_odom_imu.w();
+    odom.pose.pose.orientation.x = quat_world_base.x();
+    odom.pose.pose.orientation.y = quat_world_base.y();
+    odom.pose.pose.orientation.z = quat_world_base.z();
+    odom.pose.pose.orientation.w = quat_world_base.w();
     odom_pub->publish(odom);
 
     logger->debug("published odom (stamp={})", new_frame->stamp);
@@ -221,16 +215,24 @@ void GlimRvizViewer::odometry_new_frame(const EstimationFrame::ConstPtr& new_fra
 
   if (pose_pub->get_subscription_count()) {
     // Publish sensor pose (with loop closure)
+
+    Eigen::Quaterniond quat_base_imu = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()) *
+                                       Eigen::AngleAxisd(0, Eigen::Vector3d::UnitY()) *
+                                       Eigen::AngleAxisd(M_PI / 2, Eigen::Vector3d::UnitZ());
+
+    Eigen::Quaterniond quat_world_base = quat_world_imu * quat_base_imu.inverse();
+
+
     geometry_msgs::msg::PoseStamped pose;
     pose.header.stamp = stamp;
     pose.header.frame_id = odom_frame_id;
     pose.pose.position.x = T_world_imu.translation().x();
     pose.pose.position.y = T_world_imu.translation().y();
     pose.pose.position.z = T_world_imu.translation().z();
-    pose.pose.orientation.x = quat_world_imu.x();
-    pose.pose.orientation.y = quat_world_imu.y();
-    pose.pose.orientation.z = quat_world_imu.z();
-    pose.pose.orientation.w = quat_world_imu.w();
+    pose.pose.orientation.x = quat_world_base.x();
+    pose.pose.orientation.y = quat_world_base.y();
+    pose.pose.orientation.z = quat_world_base.z();
+    pose.pose.orientation.w = quat_world_base.w();
     pose_pub->publish(pose);
 
     logger->debug("published pose (stamp={})", new_frame->stamp);
